@@ -33,6 +33,12 @@ describe('checkAnswer', () => {
         });
     });
 
+    describe('special characters', () => {
+        it('should handle all special characters', () => {
+            assert.strictEqual(checkAnswer('', '', `tik-tok`, `tik *&/~-_+=|{}[]"'?/.>,<!@#$%^&*()tok`), true);
+        });
+    });
+
     describe('number component answers', () => {
         it('should return true when number answers are the same', () => {
             assert.strictEqual(checkAnswer('', '', '16 Candles', '16 Candles'), true);
