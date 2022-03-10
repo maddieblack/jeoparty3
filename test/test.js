@@ -33,6 +33,20 @@ describe('checkAnswer', () => {
         });
     });
 
+    describe('special characters', () => {
+        it('should handle apostrophes', () => {
+            assert.strictEqual(checkAnswer('', '', `That '70s show`, `that 70's show`), true);
+            assert.strictEqual(checkAnswer('', '', `That '70s show`, `that 70s show`), true);
+        });
+        it('should handle dashes', () => {
+            assert.strictEqual(checkAnswer('', '', `tik-tok`, `tiktok`), true);
+            assert.strictEqual(checkAnswer('', '', `tik-tok`, `tik tok`), true);
+        });
+        it('should handle all special characters', () => {
+            assert.strictEqual(checkAnswer('', '', `tik-tok`, `tik *&/~-_+=|{}[]"'?/.>,<!@#$%^&*()tok`), true);
+        });
+    });
+
     describe('number component answers', () => {
         it('should return true when number answers are the same', () => {
             assert.strictEqual(checkAnswer('', '', '16 Candles', '16 Candles'), true);
