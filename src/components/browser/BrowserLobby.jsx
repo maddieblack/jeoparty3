@@ -23,7 +23,6 @@ import trebekIntroSound from '../../assets/audio/trebekIntro.mp3';
 // DEBUG
 import { sampleLeaderboard } from '../../constants/sampleLeaderboard';
 import { samplePlayers } from '../../constants/samplePlayers';
-import {useOverride} from './hooks/useOverride';
 
 const MuteScreen = styled.div`
     ${mixins.flexAlignCenter};
@@ -261,8 +260,6 @@ const BrowserLobby = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const {isOverrideOpen, closeOverrideModal} = useOverride()
-
     const handleEmail = useCallback((e) => {
         e.preventDefault();
 
@@ -284,7 +281,6 @@ const BrowserLobby = () => {
 
     return (
         <div>
-            {/*{isOverrideOpen && <div style={{backgroundColor: 'pink'}}>test </div>}*/}
             {mute &&
                 <MuteScreen>
                     <MuteScreenText onClick={() => handleUnmute()}>

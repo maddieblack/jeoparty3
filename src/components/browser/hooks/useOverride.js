@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useState} from 'react';
 
 export const useOverride = () => {
     const [isOverrideOpen, changeShowOverrideModal] = useState(false)
@@ -19,6 +19,8 @@ export const useOverride = () => {
         return () => {
             document.removeEventListener('keydown', handleKeyPress);
         };
+
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return {isOverrideOpen, closeOverrideModal}

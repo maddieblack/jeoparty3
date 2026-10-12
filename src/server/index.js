@@ -681,6 +681,14 @@ const startTimer = (sessionName) => {
     updateGameSession(sessionName, 'buzzInTimer', buzzInTimer);
 };
 
+const getCurrentClue = (gameSession) => {
+    return gameSession.finalJeoparty ? gameSession.finalJeopartyClue : _.get(gameSession, `categories[${gameSession.categoryIndex}].clues[${gameSession.clueIndex}]`);
+};
+
+const getDollarValue = (gameSession, clue, socketId) => {
+    return clue.dailyDouble || gameSession.finalJeoparty ? _.get(gameSession, `players[${socketId}].wager`, 0) : (gameSession.doubleJeoparty ? 400 : 200) * (gameSession.clueIndex + 1);
+};
+
 const submitAnswer = (socket, answer, timeout) => {
     if (!sessionCache.get(socket.sessionName)) {
         return;
@@ -703,10 +711,10 @@ const submitAnswer = (socket, answer, timeout) => {
     }
 
     const categoryName = gameSession.finalJeoparty ? gameSession.finalJeopartyClue.categoryName : gameSession.categories[gameSession.categoryIndex].title;
-    const clue = gameSession.finalJeoparty ? gameSession.finalJeopartyClue : gameSession.categories[gameSession.categoryIndex].clues[gameSession.clueIndex];
+    const clue = getCurrentClue(gameSession);
 
     const isCorrect = checkAnswer(categoryName, clue.question, clue.answer, answer);
-    const dollarValue = clue.dailyDouble || gameSession.finalJeoparty ? _.get(gameSession, `players[${socket.id}].wager`, 0) : (gameSession.doubleJeoparty ? 400 : 200) * (gameSession.clueIndex + 1);
+    const dollarValue = getDollarValue(gameSession, clue, socket.id);
 
     if (!gameSession.finalJeoparty || (gameSession.finalJeoparty && !_.get(gameSession, `players[${socket.id}].finalJeopartyAnswerSubmitted`, false))) {
         updatePlayersAnswered(socket.sessionName, socket.id);
@@ -757,6 +765,109 @@ const submitAnswer = (socket, answer, timeout) => {
             client.emit('show_new_score', true);
         });
     }, timers.SHOW_PRE_DECISION_TIME * 1000);
+};
+
+// Only valid for the clue currently in play (or just decided) -- playersAnswered and oldScore
+// get reset in showBoard() as soon as the board reappears for the next clue.
+const buildOverrideAttempts = (sessionName) => {
+    if (!sessionCache.get(sessionName)) {
+        return [];
+    }
+
+    const gameSession = sessionCache.get(sessionName);
+
+    if (gameSession.finalJeoparty || _.isEmpty(gameSession.playersAnswered)) {
+        return [];
+    }
+
+    const clue = getCurrentClue(gameSession);
+
+    if (!clue) {
+        return [];
+    }
+
+    return gameSession.playersAnswered.map((socketId) => {
+        const player = gameSession.players[socketId];
+
+        return {
+            socketId,
+            name: player.name,
+            answer: player.answer,
+            isCorrect: player.isCorrect,
+            dollarValue: getDollarValue(gameSession, clue, socketId),
+        };
+    });
+};
+
+const applyOverride = (sessionName, socketId, isCorrect) => {
+    if (!sessionCache.get(sessionName)) {
+        return;
+    }
+
+    const gameSession = sessionCache.get(sessionName);
+    const player = gameSession.players[socketId];
+    const clue = getCurrentClue(gameSession);
+
+    if (!player || !clue || player.isCorrect === isCorrect) {
+        return;
+    }
+
+    const dollarValue = getDollarValue(gameSession, clue, socketId);
+    const correctedScore = player.score - (player.isCorrect ? dollarValue : -dollarValue) + (isCorrect ? dollarValue : -dollarValue);
+
+    updatePlayer(sessionName, socketId, 'score', correctedScore);
+    updatePlayer(sessionName, socketId, 'isCorrect', isCorrect);
+
+    const streakBeforeThisAnswer = player.isCorrect ? Math.max(0, player.streak - 1) : player.streak;
+
+    if (isCorrect) {
+        updatePlayer(sessionName, socketId, 'streak', streakBeforeThisAnswer + 1);
+        updatePlayer(sessionName, socketId, 'heat', 2);
+        updatePlayer(sessionName, socketId, 'title', titles[streakBeforeThisAnswer + 1]);
+    } else {
+        updatePlayer(sessionName, socketId, 'streak', 0);
+        updatePlayer(sessionName, socketId, 'heat', 0);
+        updatePlayer(sessionName, socketId, 'title', '');
+    }
+};
+
+const overrideDecision = (sessionName, socketId, isCorrect) => {
+    if (!sessionCache.get(sessionName)) {
+        return;
+    }
+
+    let gameSession = sessionCache.get(sessionName);
+
+    if (gameSession.finalJeoparty || !gameSession.playersAnswered.includes(socketId)) {
+        return;
+    }
+
+    applyOverride(sessionName, socketId, isCorrect);
+
+    // Only one player can legitimately be "first correct" on a clue -- reverse anyone
+    // who was credited for answering after the newly-corrected player.
+    if (isCorrect) {
+        const answerIndex = gameSession.playersAnswered.indexOf(socketId);
+
+        gameSession.playersAnswered.slice(answerIndex + 1).forEach((laterSocketId) => {
+            const laterPlayer = sessionCache.get(sessionName).players[laterSocketId];
+
+            if (laterPlayer && laterPlayer.isCorrect) {
+                applyOverride(sessionName, laterSocketId, false);
+            }
+        });
+
+        updateGameSession(sessionName, 'boardController', getClient(sessionName, socketId));
+    }
+
+    gameSession = sessionCache.get(sessionName);
+
+    gameSession.clients.forEach((client) => {
+        client.emit('player', _.get(gameSession, `players[${client.id}]`));
+    });
+
+    gameSession.browserClient.emit('players', gameSession.players);
+    gameSession.browserClient.emit('override_data', buildOverrideAttempts(sessionName));
 };
 
 const showFinalJeopartyDecision = (sessionName) => {
@@ -1176,6 +1287,22 @@ io.on('connection', (socket) => {
                 startTimer(socket.sessionName);
             }
         }
+    });
+
+    socket.on('request_override_data', () => {
+        if (!sessionCache.get(socket.sessionName)) {
+            return;
+        }
+
+        socket.emit('override_data', buildOverrideAttempts(socket.sessionName));
+    });
+
+    socket.on('override_decision', (socketId, isCorrect) => {
+        if (!sessionCache.get(socket.sessionName)) {
+            return;
+        }
+
+        overrideDecision(socket.sessionName, socketId, isCorrect);
     });
 
     socket.on('show_board', () => {

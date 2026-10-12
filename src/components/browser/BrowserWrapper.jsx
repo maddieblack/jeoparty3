@@ -1,11 +1,14 @@
 import React, { useContext, useEffect } from 'react';
 
 import { SocketContext } from '../../context/socket';
+import { useOverride } from './hooks/useOverride';
+import BrowserOverrideModal from './BrowserOverrideModal';
 
 import backgroundMusicSound from '../../assets/audio/backgroundMusic.mp3';
 
 const BrowserWrapper = (props) => {
     const socket = useContext(SocketContext);
+    const { isOverrideOpen, closeOverrideModal } = useOverride();
 
     useEffect(() => {
         socket.on('disconnect', () => {
@@ -33,6 +36,7 @@ const BrowserWrapper = (props) => {
     return (
         <div>
             {props.children}
+            <BrowserOverrideModal isOpen={isOverrideOpen} onClose={closeOverrideModal} />
         </div>
     );
 };
