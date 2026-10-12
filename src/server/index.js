@@ -831,6 +831,32 @@ const applyOverride = (sessionName, socketId, isCorrect) => {
     }
 };
 
+// Undoes a credited answer entirely rather than flipping it to wrong: the player who
+// answered after the real first-correct shouldn't have gotten to answer at all, so they're
+// restored to exactly where they were before buzzing in, not penalized as a wrong answer.
+const revertCascadedAnswer = (sessionName, socketId) => {
+    if (!sessionCache.get(sessionName)) {
+        return;
+    }
+
+    const gameSession = sessionCache.get(sessionName);
+    const player = gameSession.players[socketId];
+    const clue = getCurrentClue(gameSession);
+
+    if (!player || !clue || !player.isCorrect) {
+        return;
+    }
+
+    const dollarValue = getDollarValue(gameSession, clue, socketId);
+    const streakBeforeThisAnswer = Math.max(0, player.streak - 1);
+
+    updatePlayer(sessionName, socketId, 'score', player.score - dollarValue);
+    updatePlayer(sessionName, socketId, 'isCorrect', false);
+    updatePlayer(sessionName, socketId, 'streak', streakBeforeThisAnswer);
+    updatePlayer(sessionName, socketId, 'heat', streakBeforeThisAnswer > 0 ? 2 : 0);
+    updatePlayer(sessionName, socketId, 'title', streakBeforeThisAnswer > 0 ? titles[streakBeforeThisAnswer] : '');
+};
+
 const overrideDecision = (sessionName, socketId, isCorrect) => {
     if (!sessionCache.get(sessionName)) {
         return;
@@ -850,11 +876,7 @@ const overrideDecision = (sessionName, socketId, isCorrect) => {
         const answerIndex = gameSession.playersAnswered.indexOf(socketId);
 
         gameSession.playersAnswered.slice(answerIndex + 1).forEach((laterSocketId) => {
-            const laterPlayer = sessionCache.get(sessionName).players[laterSocketId];
-
-            if (laterPlayer && laterPlayer.isCorrect) {
-                applyOverride(sessionName, laterSocketId, false);
-            }
+            revertCascadedAnswer(sessionName, laterSocketId);
         });
 
         updateGameSession(sessionName, 'boardController', getClient(sessionName, socketId));
