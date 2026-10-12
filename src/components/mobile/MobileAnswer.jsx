@@ -72,6 +72,10 @@ const MobileAnswer = () => {
     }, []);
 
     const handleSubmitAnswer = useCallback((answer) => {
+        if (answer.trim().length === 0) {
+            return;
+        }
+
         socket.emit('submit_answer', answer, false);
         setIsAnswering(false);
 
@@ -92,7 +96,7 @@ const MobileAnswer = () => {
                                 <InputGroup className={'mb-3'}>
                                     <FormControl placeholder={'Enter your answer...'} value={answer.toUpperCase()} onChange={e => handleAnswerLivefeed(e)} />
                                     <InputGroup.Prepend>
-                                        <Button onClick={() => handleSubmitAnswer(answer)} variant={'outline-light'}>SUBMIT</Button>
+                                        <Button onClick={() => handleSubmitAnswer(answer)} variant={'outline-light'} disabled={answer.trim().length === 0}>SUBMIT</Button>
                                     </InputGroup.Prepend>
                                 </InputGroup>
 

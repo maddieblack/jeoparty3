@@ -28,8 +28,8 @@ describe('checkAnswer', () => {
             assert.strictEqual(checkAnswer('', '', 'Wa', 'Wa'), true);
         });
 
-        it('should return false when the answers are different by one letter', () => {
-            assert.strictEqual(checkAnswer('', '', 'Washington', 'Washingston'), false);
+        it('should return true when the answers are different by one letter', () => {
+            assert.strictEqual(checkAnswer('', '', 'Washington', 'Washingston'), true);
         });
     });
 
@@ -98,6 +98,36 @@ describe('checkAnswer', () => {
 
         it('should return true when expected is initial and actual is long', () => {
             assert.strictEqual(checkAnswer('', '', 'jfk', 'kennedy'), true);
+        });
+    });
+
+    describe('misspellings', () => {
+        it('should return true when a long answer has 2 typos', () => {
+            assert.strictEqual(checkAnswer('', '', 'Mississippi', 'Missisipy'), true);
+        });
+
+        it('should return false when a long answer has 3 typos', () => {
+            assert.strictEqual(checkAnswer('', '', 'Mississippi', 'Misisipy'), false);
+        });
+
+        it('should return true when part of the answer is misspelled', () => {
+            assert.strictEqual(checkAnswer('', '', 'the Jordan', 'Jordon'), true);
+        });
+
+        it('should return true when a 4-5 letter answer has 1 typo', () => {
+            assert.strictEqual(checkAnswer('', '', 'Paris', 'Pariss'), true);
+        });
+
+        it('should return false when a 4-5 letter answer has 2 typos', () => {
+            assert.strictEqual(checkAnswer('', '', 'Paris', 'Porus'), false);
+        });
+
+        it('should return false when a 3 letter answer has a typo', () => {
+            assert.strictEqual(checkAnswer('', '', 'cat', 'car'), false);
+        });
+
+        it('should return false when a number is off', () => {
+            assert.strictEqual(checkAnswer('', '', '1984', '1986'), false);
         });
     });
 

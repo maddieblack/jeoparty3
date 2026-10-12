@@ -5,8 +5,12 @@ const cookie = require('cookie');
 const randomWords = require('random-words');
 const app = express();
 const server = require('http').createServer(app);
-const io = require('socket.io')(server);
+// Check connections every 5s (default 25s + 20s timeout) so a phone that falls asleep is noticed quickly
+const io = require('socket.io')(server, { pingInterval: 5000, pingTimeout: 5000 });
 const port = process.env.PORT || 8080;
+
+// Keep the server (and everyone's game) alive if a socket handler throws on unexpected state
+process.on('uncaughtException', (err) => console.log(`Uncaught error: ${err.stack}`));
 
 let cache = require('memory-cache');
 let sessionCache = new cache.Cache();
@@ -40,6 +44,7 @@ let activePlayers = 0;
 //     }
 // });
 
+app.use('/api', require('./api'));
 app.use(express.static(path.join(__dirname, '../../build')));
 app.get('/', (req, res, next) => res.sendFile(__dirname + './index.html'));
 
@@ -286,7 +291,26 @@ const handlePlayerDisconnection = (sessionName, socket) => {
 const handlePlayerReconnection = (socket) => {
     const cookies = cookie.parse(_.get(socket, 'handshake.headers.cookie', ''));
     const playerId = _.get(cookies, '[player-id]', '');
-    const player = disconnectionCache.get(playerId);
+    let player = disconnectionCache.get(playerId);
+
+    // The phone may reconnect before the server notices its old connection dropped, so take that one over
+    if (!player) {
+        const [cookieSessionName, ...socketIdParts] = playerId.split('-');
+        const oldSocketId = socketIdParts.join('-');
+        const gameSession = sessionCache.get(cookieSessionName);
+        const oldPlayer = _.get(gameSession, `players[${oldSocketId}]`);
+
+        if (oldPlayer && oldSocketId !== socket.id) {
+            delete gameSession.players[oldSocketId];
+            sessionCache.put(cookieSessionName, gameSession);
+            activePlayers--;
+
+            const oldSocket = getClient(cookieSessionName, oldSocketId);
+            oldSocket && oldSocket.disconnect(true);
+
+            player = oldPlayer;
+        }
+    }
 
     if (player && sessionCache.get(player.sessionName)) {
         // DEBUG
@@ -304,6 +328,11 @@ const handlePlayerReconnection = (socket) => {
             let playersAnswered = gameSession.playersAnswered;
             playersAnswered.push(socket.id);
             gameSession.playersAnswered = playersAnswered;
+        }
+
+        // Hand this player's turn to pick a clue over to their new connection
+        if (_.get(gameSession, 'boardController.id') === player.socketId) {
+            gameSession.boardController = socket;
         }
 
         player.socketId = socket.id;
@@ -329,6 +358,14 @@ const handlePlayerReconnection = (socket) => {
             socket.emit('reconnect');
             socket.emit('set_cookie', player);
             socket.emit('player', player);
+
+            // Without this a phone rejoining during clue selection shows no board, even for the player picking
+            const gameSession = sessionCache.get(socket.sessionName);
+
+            if (gameSession && gameSession.currentGameState === GameState.BOARD) {
+                socket.emit('categories', gameSession.categories, gameSession.doubleJeoparty);
+                socket.emit('is_board_controller', socket.id === _.get(gameSession, 'boardController.id'), gameSession.boardRevealed);
+            }
         });
 
         activePlayers++;
@@ -548,6 +585,8 @@ const buzzIn = (socket) => {
 
     if (gameSession.buzzInTimeout) {
         updateGameSession(socket.sessionName, 'buzzInTimeout', false);
+        clearTimeout(gameSession.buzzInTimer);
+        updateGameSession(socket.sessionName, 'buzzInTimer', null);
 
         const clue = gameSession.finalJeoparty ? gameSession.finalJeopartyClue : gameSession.categories[gameSession.categoryIndex].clues[gameSession.clueIndex];
         const categoryName = gameSession.finalJeoparty ? gameSession.finalJeopartyClue.categoryName : gameSession.categories[gameSession.categoryIndex].title;
@@ -577,12 +616,18 @@ const buzzIn = (socket) => {
 
         updateGameSession(socket.sessionName, 'currentGameState', GameState.ANSWER);
 
-        setTimeout(() => {
+        // Cancelled in submitAnswer once this player answers, so it can't fire during a later clue
+        clearTimeout(gameSession.answerTimer);
+        const answerTimer = setTimeout(() => {
             if (!sessionCache.get(socket.sessionName)) {
                 return;
             }
 
             const gameSession = sessionCache.get(socket.sessionName);
+
+            if (gameSession.answerTimer !== answerTimer) {
+                return;
+            }
 
             if (gameSession.finalJeoparty) {
                 gameSession.clients.map((client) => {
@@ -596,6 +641,8 @@ const buzzIn = (socket) => {
                 submitAnswer(socket, _.get(gameSession, `players[${socket.id}].answer`, ''), true);
             }
         }, (gameSession.finalJeoparty ? timers.FINAL_JEOPARTY_ANSWER_TIMEOUT : timers.ANSWER_TIMEOUT) * 1000);
+
+        updateGameSession(socket.sessionName, 'answerTimer', answerTimer);
     }
 };
 
@@ -608,18 +655,30 @@ const startTimer = (sessionName) => {
 
     updateGameSession(sessionName, 'buzzInTimeout', true);
 
-    setTimeout(() => {
+    // The extra grace period covers network lag and the timer bar starting slightly after this one,
+    // so a buzz that beats the bar on screen still counts
+    clearTimeout(_.get(sessionCache.get(sessionName), 'buzzInTimer'));
+    const buzzInTimer = setTimeout(() => {
         if (!sessionCache.get(sessionName)) {
             return;
         }
 
         const gameSession = sessionCache.get(sessionName);
 
+        if (gameSession.buzzInTimer !== buzzInTimer) {
+            return;
+        }
+
         if (gameSession.buzzInTimeout) {
+            // Close buzzing before revealing the answer so a late buzz can't start an answer on top of it
+            updateGameSession(sessionName, 'buzzInTimeout', false);
+
             const correctAnswer = sessionCache.get(sessionName).categories[gameSession.categoryIndex].clues[gameSession.clueIndex].answer;
             showCorrectAnswer(sessionName, correctAnswer, true, true);
         }
-    }, timers.BUZZ_IN_TIMEOUT * 1000);
+    }, (timers.BUZZ_IN_TIMEOUT + timers.BUZZ_IN_GRACE) * 1000);
+
+    updateGameSession(sessionName, 'buzzInTimer', buzzInTimer);
 };
 
 const submitAnswer = (socket, answer, timeout) => {
@@ -631,6 +690,16 @@ const submitAnswer = (socket, answer, timeout) => {
 
     if (!gameSession.finalJeoparty && gameSession.playersAnswered.includes(socket.id)) {
         return;
+    }
+
+    // No clue in play (e.g. a late answer after the game moved back to the board)
+    if (!gameSession.finalJeoparty && !_.get(gameSession, `categories[${gameSession.categoryIndex}].clues[${gameSession.clueIndex}]`)) {
+        return;
+    }
+
+    if (!gameSession.finalJeoparty) {
+        clearTimeout(gameSession.answerTimer);
+        updateGameSession(socket.sessionName, 'answerTimer', null);
     }
 
     const categoryName = gameSession.finalJeoparty ? gameSession.finalJeopartyClue.categoryName : gameSession.categories[gameSession.categoryIndex].title;
@@ -952,7 +1021,12 @@ io.on('connection', (socket) => {
         }
 
         const gameSession = sessionCache.get(socket.sessionName);
-        const clue = gameSession.categories[gameSession.categoryIndex].clues[gameSession.clueIndex]
+        const clue = _.get(gameSession, `categories[${gameSession.categoryIndex}].clues[${gameSession.clueIndex}]`);
+
+        // A late or duplicate request can arrive after the clue was already cleared
+        if (!clue) {
+            return;
+        }
 
         if (clue.dailyDouble) {
             setTimeout(() => {
@@ -1139,4 +1213,10 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(port);
+server.listen(port, (err) => {
+    if(err){
+        console.log("Error in server setup")
+    } else {
+        console.log("Server listening on Port", port);
+    }
+});

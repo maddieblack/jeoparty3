@@ -5,7 +5,8 @@ const { MongoClient } = require('mongodb');
 
 const url = 'mongodb+srv://admin:lEs45HnBK0EUwy2h@jeoparty.xssla.mongodb.net/leaderboard?retryWrites=true&w=majority';
 const client = new MongoClient(url);
-const connection = client.connect();
+// The leaderboard cluster may be unreachable (e.g. local play); don't crash the server over it
+const connection = client.connect().catch((err) => console.log(`Leaderboard DB unavailable: ${err.message}`));
 
 exports.resetLeaderboard = async (colName) => {
     try {
@@ -35,7 +36,8 @@ exports.getLeaderboard = async () => {
 
         return await leaderboardCol.find({}).toArray();
     } catch (err) {
-        console.log(err.stack);
+        console.log(`Leaderboard unavailable: ${err.message}`);
+        return [];
     }
 }
 

@@ -1,4 +1,4 @@
-const js = require('jservice-node');
+const clueDb = require('./clueDb');
 const _ = require('lodash');
 
 const formatRaw = require('./format').formatRaw;
@@ -6,7 +6,6 @@ const formatCategory = require('./format').formatCategory;
 
 const finalJeopartyClues = require('../constants/finalJeopartyClues.js').finalJeopartyClues;
 
-const MAX_CATEGORY_ID = 18418;
 const NUM_CATEGORIES = 6;
 const NUM_CLUES = 5;
 
@@ -43,24 +42,20 @@ const getDailyDoubleIndices = () => {
     return [categoryIndex, clueIndex, djCategoryIndex1, djClueIndex1, djCategoryIndex2, djClueIndex2];
 };
 
+// jservice.io is offline, so categories come from a local copy of its database
 const getRandomCategory = (cb) => {
-    const categoryId = Math.floor(Math.random() * MAX_CATEGORY_ID) + 1;
+    clueDb.getRandomCategory(NUM_CLUES).then((category) => {
+        const startingIndex = Math.floor(Math.random() * Math.floor(category.clues_count / 5)) * 5;
+        category.clues = category.clues.slice(startingIndex, startingIndex + 5);
 
-    js.category(categoryId, (error, response, category) => {
-        if (!error && response.statusCode === 200) {
-            const cluesCount = category.clues_count;
-            const startingIndex = Math.round((Math.random() * (cluesCount - 5)) / 5) * 5;
-            category.clues = category.clues.slice(startingIndex, startingIndex + 5);
-
-            if (approveCategory(category)) {
-                cb(error, formatCategory(category));
-            } else {
-                cb(true, category);
-            }
+        if (approveCategory(category)) {
+            cb(null, formatCategory(category));
         } else {
-            console.log(`Error: ${response.statusCode}`);
             cb(true, category);
         }
+    }).catch((err) => {
+        console.log(`Error loading category: ${err.message}`);
+        setTimeout(() => cb(true, {}), 1000);
     });
 };
 

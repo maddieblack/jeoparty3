@@ -24,6 +24,7 @@ import { sayRoundFiller, sayBoardControllerNameFiller, sayClueRequestFiller, say
 
 // DEBUG
 import { sampleCategories } from '../../constants/sampleCategories';
+import { useOverride } from './hooks/useOverride';
 
 const getCategoryNameCompressor = (textLength) => {
     let compressor = null;
@@ -168,6 +169,7 @@ const BrowserBoard = () => {
 
     const debug = useContext(DebugContext);
 
+    const {isOverrideOpen, closeOverrideModal} = useOverride()
     const [categories, setCategories] = useState(debug ? sampleCategories : []);
     const [doubleJeoparty, setDoubleJeoparty] = useState(false);
     const [categoryIndex, setCategoryIndex] = useState(debug ? 0 : null);
